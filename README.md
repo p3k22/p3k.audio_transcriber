@@ -354,6 +354,16 @@ Set `RemoteLog.Url` to an HTTPS endpoint and each transcription line is fire-and
 POSTed as `text/plain` with a Bearer token in the `Authorization` header. Failures are
 logged to stderr and never block transcription.
 
+Generate a token — any high-entropy secret works; a 32-byte hex string is plenty:
+
+```bash
+openssl rand -hex 32
+```
+
+Put the **same** value in two places: `RemoteLog.Token` in `config.json` (client side) and the
+`YOUR_TOKEN` check in `log.php` (server side). Leaving `RemoteLog.Url` blank disables the
+feature entirely.
+
 VPS side (`log.php`):
 
 ```php
