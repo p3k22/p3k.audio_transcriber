@@ -21,6 +21,12 @@ namespace p3k.audio_transcriber.Runtime
 
         public bool IsRunning { get; private set; }
 
+        /// <summary>Memory-watchdog settings from the loaded config (populated on <see cref="Start"/>).</summary>
+        internal WatchdogConfig Watchdog { get; private set; } = new();
+
+        /// <summary>Last time any transcript line was emitted; the watchdog uses it to recycle in a quiet gap.</summary>
+        public DateTime LastTranscriptUtc => _emitter.LastActivityUtc;
+
         public TranscriptionSystem(string? configPath = null, bool forceFp32 = false)
         {
             _configPath = configPath;
@@ -44,6 +50,8 @@ namespace p3k.audio_transcriber.Runtime
 
                 if (_forceFp32 && !config.Parakeet.IsFp32)
                     config = config with { Parakeet = config.Parakeet with { Precision = "fp32" } };
+
+                Watchdog = config.Watchdog;
 
                 int sampleRate = config.Audio.SampleRate;
                 _engine = new EngineRuntime();

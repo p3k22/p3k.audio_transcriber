@@ -14,6 +14,13 @@ namespace p3k.audio_transcriber.Runtime
         private readonly SharedConsole _console = new();
         private readonly Dictionary<string, ConsoleWindow> _windows = new();
 
+        // Last time any transcript line was produced. Read by the memory watchdog to
+        // find a quiet gap to recycle in. Updated from several worker threads, so the
+        // tick count is exchanged atomically.
+        private long _lastActivityTicks = DateTime.UtcNow.Ticks;
+        public DateTime LastActivityUtc => new(Interlocked.Read(ref _lastActivityTicks), DateTimeKind.Utc);
+        private void MarkActivity() => Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
+
         public void ClearScreen() => _console.ClearScreen();
 
         public void Configure(int sampleRate, RemoteLogConfig remoteLog, string token)
@@ -49,6 +56,7 @@ namespace p3k.audio_transcriber.Runtime
             foreach (TranscriptResult r in transcriber.Transcribe(samples, _sampleRate))
             {
                 if (r.Text.Length == 0) continue;
+                MarkActivity();
                 string tag = r.Engine is null ? label : $"{label}/{r.Engine}";
                 string line = $"[{stamp}] [{tag}] {r.Text}";
 
@@ -65,6 +73,7 @@ namespace p3k.audio_transcriber.Runtime
         public void EmitStreaming(string text, bool isFinal, string label)
         {
             if (text.Length == 0) return;
+            MarkActivity();
             string stamp = DateTime.Now.ToString("HH:mm:ss");
             string tag = isFinal ? label : $"{label}~";
             string line = $"[{stamp}] [{tag}] {text}";

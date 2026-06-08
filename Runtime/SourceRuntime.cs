@@ -68,10 +68,18 @@ namespace p3k.audio_transcriber.Runtime
                 _loopbackStreamingPipeline = new StreamingPipeline(
                     loopbackLabel, loopbackRecognizer, sampleRate,
                     (text, isFinal) => emitter.EmitStreaming(text, isFinal, loopbackLabel));
-                _loopbackSource = new WasapiLoopbackSource(_loopbackStreamingPipeline.Queue, sampleRate, config.Loopback.DeviceIndex);
-                _loopbackStreamingPipeline.Start();
-                _loopbackSource.Start();
-                Console.Error.WriteLine($"Loopback (streaming): {_loopbackSource.DeviceName}  (tag '{loopbackLabel}').");
+                try
+                {
+                    _loopbackSource = new WasapiLoopbackSource(_loopbackStreamingPipeline.Queue, sampleRate, config.Loopback.DeviceIndex);
+                    _loopbackStreamingPipeline.Start();
+                    _loopbackSource.Start();
+                    Console.Error.WriteLine($"Loopback (streaming): {_loopbackSource.DeviceName}  (tag '{loopbackLabel}').");
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Loopback disabled: failed to start system-audio capture ({ex.Message}).");
+                    DisableLoopbackLane();
+                }
             }
 
             LogMic(config, sampleRate);
@@ -123,13 +131,38 @@ namespace p3k.audio_transcriber.Runtime
                     VadFactory.CreatePreRoll(loopbackVad, sampleRate),
                     maxForcedCutSeconds: loopbackVad.MaxSpeechDuration,
                     sampleRate: sampleRate);
-                _loopbackSource = new WasapiLoopbackSource(_loopbackPipeline.Queue, sampleRate, config.Loopback.DeviceIndex);
-                _loopbackPipeline.Start();
-                _loopbackSource.Start();
-                Console.Error.WriteLine($"Loopback: {_loopbackSource.DeviceName}  (tag '{config.Loopback.Label}').");
+                try
+                {
+                    _loopbackSource = new WasapiLoopbackSource(_loopbackPipeline.Queue, sampleRate, config.Loopback.DeviceIndex);
+                    _loopbackPipeline.Start();
+                    _loopbackSource.Start();
+                    Console.Error.WriteLine($"Loopback: {_loopbackSource.DeviceName}  (tag '{config.Loopback.Label}').");
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Loopback disabled: failed to start system-audio capture ({ex.Message}).");
+                    DisableLoopbackLane();
+                }
             }
 
             LogMic(config, sampleRate);
+        }
+
+        /// <summary>Tears down any partially-started loopback resources so a failed start
+        /// leaves the mic/TCP lanes running instead of crashing the whole transcriber.</summary>
+        private void DisableLoopbackLane()
+        {
+            _loopbackSource?.Dispose();
+            _loopbackPipeline?.Complete();
+            _loopbackPipeline?.Dispose();
+            _loopbackStreamingPipeline?.Complete();
+            _loopbackStreamingPipeline?.Dispose();
+            _loopbackTranscriber?.Dispose();
+
+            _loopbackSource = null;
+            _loopbackPipeline = null;
+            _loopbackStreamingPipeline = null;
+            _loopbackTranscriber = null;
         }
 
         private static void LogMic(AppConfig config, int sampleRate)

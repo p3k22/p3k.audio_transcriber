@@ -136,6 +136,22 @@ namespace p3k.audio_transcriber.Configs
             "ServerModelPath": "",      // optional explicit ggml model path; blank = auto-download ggml-large-v3-turbo.bin next to the exe.
             "ServerThreads": 6,         // CPU threads passed to whisper-server (-t).
             "ServerStartTimeoutSeconds": 60  // seconds to wait for the server to load the model + listen.
+          },
+
+          // Memory watchdog. sherpa-onnx / ONNX Runtime leak native memory the .NET GC can't
+          // reclaim, so a long run climbs all day until restarted. This recycles the pipeline
+          // (a clean Stop->Start that rebuilds the native models) when resident RAM crosses
+          // ThresholdMb, waiting for a quiet gap so no utterance is cut. It also logs a memory
+          // line to stderr every LogIntervalSeconds (managed-heap vs process-private).
+          "Watchdog": {
+            "Enabled": true,            // false = only log memory, never recycle.
+            "ThresholdMb": 6000,        // resident RAM (working set) MB that triggers a recycle. Keep it ABOVE the
+                                        // model baseline (fp32 Parakeet's working set is ~4 GB) or it recycles constantly.
+            "QuietSeconds": 3.0,        // seconds of no transcript output that count as a safe gap to recycle in.
+            "MaxWaitSeconds": 120.0,    // if audio never goes quiet, force-recycle after this many seconds over budget.
+            "PollSeconds": 5.0,         // how often memory is sampled / the budget is checked.
+            "LogIntervalSeconds": 60.0, // how often a [mem] line is written to stderr.
+            "MinRecycleSeconds": 60.0   // minimum gap between recycles, so a too-low threshold can't thrash-restart.
           }
         }
         """;

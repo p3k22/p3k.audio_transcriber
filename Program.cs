@@ -86,6 +86,12 @@ if (!system.Start())
     return 1;
 }
 
+// Cap native memory growth (sherpa-onnx / ONNX Runtime leak below the managed layer):
+// recycle the pipeline when committed memory crosses the budget, and log managed-vs-native
+// memory periodically so the leak is observable.
+var watchdog = new MemoryWatchdog(system, system.Watchdog);
+watchdog.Start();
+
 var quit = new ManualResetEventSlim(false);
 
 // Ctrl+C -> graceful shutdown (when a console is attached).
@@ -97,7 +103,11 @@ Console.CancelKeyPress += (_, e) =>
 
 // Window close (X button) fires ProcessExit without going through CancelKeyPress.
 // Explicitly stop so ONNX thread pools are signalled before the process dies.
-AppDomain.CurrentDomain.ProcessExit += (_, _) => system.Stop();
+AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+{
+    watchdog.Dispose();
+    system.Stop();
+};
 
 // Host-driven shutdown: only when stdin is a redirected pipe, so an interactive
 // run (no piped input) doesn't see instant EOF. The host stops us by writing
@@ -125,6 +135,7 @@ if (Console.IsInputRedirected)
 quit.Wait();
 
 Console.Error.WriteLine("Stopping ...");
+watchdog.Dispose();   // stop recycling before we tear the pipeline down
 system.Stop();
 Console.Error.WriteLine("Stopped.");
 return 0;

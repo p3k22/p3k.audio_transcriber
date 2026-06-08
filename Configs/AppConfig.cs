@@ -14,5 +14,6 @@ namespace p3k.audio_transcriber.Configs
         public LoopbackConfig Loopback { get; init; } = new();
         public EngineConfig Engine { get; init; } = new();
         public RemoteLogConfig RemoteLog { get; init; } = new();
+        public WatchdogConfig Watchdog { get; init; } = new();
     }
 }
