@@ -12,8 +12,10 @@ namespace p3k.audio_transcriber.Audio
     /// When constructed with DeviceIndex -1 (default device), a background thread polls
     /// the Windows default render device every 300 ms and restarts capture whenever it
     /// changes, so device switches via Volume2 or Sound settings are handled automatically.
-    /// RecordingStopped with an exception triggers the same restart path for physical
-    /// device removal/disconnection.
+    /// RecordingStopped with an exception (which WASAPI raises on ANY device topology
+    /// change, not just changes to the captured device) triggers a restart in both the
+    /// default-tracking and pinned-device cases, re-resolving the originally configured
+    /// endpoint when pinned.
     /// </summary>
     internal sealed class WasapiLoopbackSource : IDisposable
     {
@@ -21,6 +23,7 @@ namespace p3k.audio_transcriber.Audio
         private readonly BlockingCollection<float[]> _queue;
         private readonly int _targetRate;
         private readonly bool _trackDefault;
+        private readonly string? _pinnedDeviceId;
         private readonly object _restartLock = new();
         private string? _trackedDeviceId;
         private DateTime _lastRestartUtc = DateTime.MinValue;
@@ -48,6 +51,7 @@ namespace p3k.audio_transcriber.Audio
                         $"Loopback DeviceIndex {deviceIndex} is out of range (0..{devices.Count - 1}).");
                 var device = devices[deviceIndex];
                 DeviceName = device.FriendlyName;
+                _pinnedDeviceId = device.ID;
                 _capture = new WasapiLoopbackCapture(device);
             }
 
@@ -134,9 +138,10 @@ namespace p3k.audio_transcriber.Audio
 
         private void OnRecordingStopped(object? sender, StoppedEventArgs e)
         {
-            // Physical device removal — watcher won't catch this because GetDefaultAudioEndpoint
-            // will also fail or return something different, but handle it explicitly just in case
-            if (!_trackDefault || _disposed || e.Exception == null) return;
+            // WASAPI invalidates audio sessions on ANY device topology change (add/remove/
+            // default change), not just changes to the captured device, so this must be
+            // handled regardless of whether we're tracking the default device.
+            if (_disposed || e.Exception == null) return;
             ThreadPool.QueueUserWorkItem(_ => TryRestartCapture($"session interrupted: {e.Exception.Message}"));
         }
 
@@ -160,11 +165,39 @@ namespace p3k.audio_transcriber.Audio
                         try { _capture.StopRecording(); } catch { }
                         _capture.Dispose();
 
-                        _capture = new WasapiLoopbackCapture();
+                        if (_trackDefault)
+                        {
+                            _capture = new WasapiLoopbackCapture();
+                            Console.Error.WriteLine("Loopback: restarted on new default playback device.");
+                        }
+                        else
+                        {
+                            using var enumerator = new MMDeviceEnumerator();
+                            MMDevice? device = null;
+                            try
+                            {
+                                var pinned = enumerator.GetDevice(_pinnedDeviceId);
+                                if (pinned.State == DeviceState.Active) device = pinned;
+                            }
+                            catch { }
+
+                            if (device != null)
+                            {
+                                _capture = new WasapiLoopbackCapture(device);
+                                Console.Error.WriteLine($"Loopback: restarted on '{DeviceName}'.");
+                            }
+                            else
+                            {
+                                // Originally configured device is gone — fall back to the
+                                // current default render device until it comes back.
+                                _capture = new WasapiLoopbackCapture();
+                                Console.Error.WriteLine($"Loopback: '{DeviceName}' is unavailable, falling back to default playback device.");
+                            }
+                        }
+
                         HookCapture(_capture);
                         _capture.StartRecording();
                         _lastRestartUtc = DateTime.UtcNow;
-                        Console.Error.WriteLine("Loopback: restarted on new default playback device.");
                         return;
                     }
                     catch (Exception ex)
